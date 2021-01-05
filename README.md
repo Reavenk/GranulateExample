@@ -1,6 +1,7 @@
 # Granulate Example
 
-A simple project showing how to granulate audio, with a test scene that allows playing with variables.
+A simple project showing how to granulate audio, with a test scene that allows toying with
+it. Made with a raw C# implementation and supports building for the Unity WebGL player.
 
 #License
 

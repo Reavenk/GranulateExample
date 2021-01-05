@@ -3,12 +3,12 @@ mergeInto(LibraryManager.library,
 
 	Recording_Start: function () 
 	{
-		MicInit();
+		StartMic();
 	},
 
 	Recording_Stop: function()
 	{
-		stop_microphone();
+		StopMic();
 	},
 
 	Recording_IsRecording: function()

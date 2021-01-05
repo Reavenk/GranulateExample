@@ -71,12 +71,12 @@ public class Test : MonoBehaviour
     /// <summary>
     /// The audio clip recorded.
     /// </summary>
-    public AudioClip audioClip = null;
+    AudioClip audioClip = null;
 
     /// <summary>
-    /// The processed audio when the recorded audio is granulated.
+    /// Binary float array data holding the PCM for the packaged audio sample.
     /// </summary>
-    public AudioClip granulatedClip = null;
+    public TextAsset previewData;
 
     /// <summary>
     /// The audio source to play from. Set in the inspector.
@@ -84,19 +84,9 @@ public class Test : MonoBehaviour
     public AudioSource audioSource;
 
     /// <summary>
-    /// The name of the recording device recorded from. Cached and displayed for debugging.
-    /// </summary>
-    public string recordingDevice;
-
-    /// <summary>
     /// The grains extracted from the recorded audio clips.
     /// </summary>
     List<Grain> grains = null;
-
-    /// <summary>
-    /// The record and playback rate. Kept as a constant to keep things simple.
-    /// </summary>
-    const int FreqRate = 44100;
 
     const float MaxScale = 4.0f;        // The highest amount we'll allow for an individual scaling operation
     const float MinScale = 0.25f;        // The smallest amount we'll allow for an individual scaling operation.
@@ -109,30 +99,51 @@ public class Test : MonoBehaviour
 
     float gain = 1.0f;
 
-    /// <summary>
-    /// Maximum number of seconds we'll allow for recording.
-    /// </summary>
-    const int MaxRecordTime = 5;
-
     float scaleAmt = 1.5f;
     float grainWidth = 0.2f;
     float grainStride = 0.1f;
 
+    /// <summary>
+    /// Cached recording state - which we can compare with WebMic's value to
+    /// see if the recording state changed from the previous frame. This is 
+    /// done as a hack because WebMic doesn't have any features for a callback
+    /// when the recording stops from passing the max record time.
+    /// </summary>
+    bool recording = false;
+
     // Used for preview of how much recording time is left.
     float timeStartedRecording = 0.0f;  
 
-    public TextAsset previewData;
-
+    /// <summary>
+    /// Scrollbar value for the UI.
+    /// </summary>
     Vector2 uiScroll = Vector2.zero;
+
+    /// <summary>
+    /// Microphone wrapper.
+    /// </summary>
+    public WebMic mic;
 
     void Start()
     {
-        if(Microphone.devices.Length > 0)
-            this.recordingDevice = Microphone.devices[0];
+        this.mic.SetDefaultRecordingDevice();
     }
 
-    // void Update()
-    // {}
+    void Update()
+    {
+#if UNITY_WEBGL
+        if(this.mic.RecordingState() == WebMic.State.Recording)
+        { 
+            float recordLeft = Time.time - this.timeStartedRecording;
+
+            if(recordLeft >= WebMic.MaxRecordTime)
+            {
+                this.audioClip = this.mic.StopRecording();
+                this.recording = false;
+            }
+        }
+#endif
+    }
 
     
 
@@ -225,7 +236,7 @@ public class Test : MonoBehaviour
     public static float[] ReconstructGrains(List<Grain> grains, float gain)
     {
         Grain lastGrain = grains[grains.Count - 1];
-        int retSampleCt = (int)(lastGrain.start * FreqRate) + lastGrain.samples.Length;
+        int retSampleCt = (int)(lastGrain.start * WebMic.FreqRate) + lastGrain.samples.Length;
 
         // Doing a weighted average over time, so for each moment in time.
         float [] ret = new float[retSampleCt];  // accumulated Sample_Value * Weight
@@ -238,10 +249,10 @@ public class Test : MonoBehaviour
 
         foreach (Grain g in grains)
         {
-            int start = (int)(g.start * FreqRate);      // Sample index to start accumulating data into.
+            int start = (int)(g.start * WebMic.FreqRate);      // Sample index to start accumulating data into.
             int end = g.samples.Length;                                 // The number of samples to write.
-            int endup = (int)(g.inEdge * FreqRate);     // The number of samples for the ramp-up
-            int endhigh = (int)(g.outEdge * FreqRate);  // The number of samples before ramping down.
+            int endup = (int)(g.inEdge * WebMic.FreqRate);     // The number of samples for the ramp-up
+            int endhigh = (int)(g.outEdge * WebMic.FreqRate);  // The number of samples before ramping down.
 
             int i = 0;  // The current grain sample we're writing.
 
@@ -288,9 +299,9 @@ public class Test : MonoBehaviour
         GUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
         GUILayout.BeginVertical(GUILayout.Width(400.0f));
-
+    
         this.GUIInnerUI();
-
+    
         GUILayout.EndVertical();
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
@@ -301,15 +312,17 @@ public class Test : MonoBehaviour
     {
         GUIHeader("STEP1) Record sample audio");
 
-        GUILayout.Label("MIC : " + this.recordingDevice);
+#if !UNITY_WEB || UNITY_EDITOR
+        GUILayout.Label("MIC : " + this.mic.recordingDevice);
+#endif
 
-        if (Microphone.IsRecording(this.recordingDevice) == false)
+        if (this.mic.RecordingState() ==  WebMic.State.NotActive)
         {
             if (GUILayout.Button("Record", GUILayout.Height(50.0f)) == true)
             {
-                this.audioClip = Microphone.Start(this.recordingDevice, false, MaxRecordTime, FreqRate);
+                this.mic.StartRecording();
+                
                 this.timeStartedRecording = Time.time;
-                this.granulatedClip = null;
                 this.grains = null;
             }
             if(GUILayout.Button("Load Sample") == true)
@@ -318,64 +331,72 @@ public class Test : MonoBehaviour
                 byte [] rb = previewData.bytes;
                 float [] floatArray = new float[rb.Length / 4];
                 System.Buffer.BlockCopy(rb, 0, floatArray, 0, rb.Length);
-
-                this.audioClip = AudioClip.Create("", floatArray.Length, 1, FreqRate, false);
+        
+                this.audioClip = AudioClip.Create("", floatArray.Length, 1, WebMic.FreqRate, false);
                 this.audioClip.SetData(floatArray, 0);
-                this.granulatedClip = null;
                 this.grains = null;
             }
         }
         else
         {
+            this.recording = true;
+        
             GUI.color = Color.red;
-
-            string timeLeft = (MaxRecordTime - (Time.time - this.timeStartedRecording)).ToString("0.00");
+        
+            string timeLeft = (WebMic.MaxRecordTime - (Time.time - this.timeStartedRecording)).ToString("0.00");
             if (GUILayout.Button($"Stop\n" + timeLeft, GUILayout.Height(50.0f)) == true)
-                Microphone.End(this.recordingDevice);
-
+                this.audioClip = this.mic.StopRecording();
+                
+        
             GUI.color = Color.white;
-
+        
         }
-
+        
+        if(this.recording == true)
+        { 
+            this.audioClip = this.mic.RecordingClip;
+            this.recording = false;
+        }
+        
         if (this.audioClip == null)
         {
             GUILayout.Label("There is not audio to test granulation on. Press the \"Record\" button to record a sample.");
             return;
         }
-
-        if (Microphone.IsRecording(this.recordingDevice) == true)
+        
+        if (this.mic.RecordingState() != WebMic.State.NotActive)
             return;
-
-#if UNITY_EDITOR
-        if(GUILayout.Button("Save Preview") == true)
-            SaveAudio();
-#endif
-
-        GUIHeader("STEP 2) Preview recording & Grainulate");
-
+        
+//#if UNITY_EDITOR
+//        if(GUILayout.Button("Save Preview") == true)
+//            SaveAudio();
+//#endif
+    
+        GUIHeader("STEP 2) Preview recording & Granulate");
+    
         GUILayout.Label("Press Play to preview the recorded sample.");
         if (GUILayout.Button("Play") == true)
         {
             this.audioSource.clip = this.audioClip;
             this.audioSource.Play();
         }
-
+    
         bool wipeGrains = false;
-
+    
         GUILayout.Label("Grain widths (seconds)");
         if (GUISlider(ref this.grainWidth, MinGrainWidth, MaxGrainWidth) == true)
             wipeGrains = true;
-
+    
         GUILayout.Space(10.0f);
         GUILayout.Label("Width Between Grains (stride) (in seconds)");
         if (GUISlider(ref this.grainStride, MinGrainStride, MaxGrainStride) == true)
             wipeGrains = true;
-
+    
         GUILayout.Label("Press Granulate to process the recorded sample into grains.");
         if (GUILayout.Button("Granulate", GUILayout.Height(50.0f)) == true)
         {
             wipeGrains = false;
-
+    
             this.grains =
                 Granulate(
                     this.audioClip,
@@ -384,77 +405,77 @@ public class Test : MonoBehaviour
                     this.grainWidth * 0.45f,
                     this.grainWidth * 0.45f);
         }
-
+    
         if (wipeGrains == true)
             this.grains = null;
-
+    
         if (this.grains == null)
             return;
-
+    
         GUIHeader("STEP 3) Reconstruct Grains");
-
+    
         GUILayout.Label($"Has {this.grains.Count} grains.");
-
-
+    
+    
         GUILayout.Label("Time Reconstruction Scale");
         GUISlider(ref this.scaleAmt, MinScale, MaxScale);
         GUILayout.BeginHorizontal();
-
+    
         if (GUILayout.Button("x0.25") == true)
             this.scaleAmt = 0.25f;
-
+    
         if (GUILayout.Button("x0.5") == true)
             this.scaleAmt = 0.5f;
-
+    
         if (GUILayout.Button("x1.0f") == true)
             this.scaleAmt = 1.0f;
-
+    
         if (GUILayout.Button("x1.25") == true)
             this.scaleAmt = 1.25f;
-
+    
         if (GUILayout.Button("x1.5") == true)
             this.scaleAmt = 1.5f;
-
+    
         if (GUILayout.Button("x2") == true)
             this.scaleAmt = 2.0f;
         GUILayout.EndHorizontal();
-
+    
         GUILayout.Space(10.0f);
         GUILayout.Label("Audio Amp");
         GUISlider(ref this.gain, 1.0f, 2.0f);
-
-
+    
+    
         if (GUILayout.Button("Reconstruct", GUILayout.Height(50.0f)) == true)
         {
             ScaleGrainTime(this.grains, this.scaleAmt, false);
-
+    
             float[] samp = ReconstructGrains(this.grains, this.gain);
-            AudioClip newclip = AudioClip.Create("", samp.Length, 1, FreqRate, false);
+            AudioClip newclip = AudioClip.Create("", samp.Length, 1, WebMic.FreqRate, false);
             newclip.SetData(samp, 0);
-
+    
             this.audioSource.clip = newclip;
             this.audioSource.Play();
         }
     }
-
+    
     public static bool GUISlider(ref float val, float min, float max)
     {
         float orig = val;
-
+    
         GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
         val = GUILayout.HorizontalSlider(val, min, max, GUILayout.ExpandWidth(true));
         GUI.enabled = false;
         GUILayout.TextField(val.ToString(), GUILayout.Width(100.0f));
         GUI.enabled = true;
         GUILayout.EndHorizontal();
-
+    
         return orig != val;
     }
-
+    
     public static void GUIHeader(string info)
     {
         GUILayout.Space(20.0f);
-
+    
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.Space(40.0f);
         GUILayout.BeginHorizontal();
@@ -466,6 +487,13 @@ public class Test : MonoBehaviour
     }
 
 #if UNITY_EDITOR
+    /// <summary>
+    /// Currently unhooked for the UI, but the function used to save a 
+    /// recording while running in the Editor.
+    /// 
+    /// We do this instead of just saving an AudioClip because Unity
+    /// is finicky about reading packaged audio clips for web.
+    /// </summary>
     void SaveAudio()
     {
         if (this.audioClip == null)
@@ -487,4 +515,5 @@ public class Test : MonoBehaviour
         }
     }
 #endif
+
 }

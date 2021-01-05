@@ -1,30 +1,87 @@
-﻿using System.Runtime.InteropServices;
+﻿// MIT License
+// 
+// Copyright (c) 2021 Pixel Precision, LLC
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+using System.Runtime.InteropServices;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
 
+/// <summary>
+/// A class to wrap the functionality of the microphone to hack in microphone 
+/// abilities for WebGL.
+/// 
+/// It does not handle streaming, and for sanity sake for the WebGL platform,
+/// it only records WebMic.MaxRecordTime seconds of audio.
+/// 
+/// For simplicity, the audio is hard coded to 44100 and we only care about mono audio.
+/// </summary>
+/// <remarks>It's expected to be added to a root GameObject named "Managers"</remarks>
+/// <remarks>The recording works differently than Unity's base implementation, 
+/// in that the AudioClip isn't available until after the recording is finished.</remarks>
+/// <remarks>To use properly for the browser, make sure MicRoutines.js included on
+/// the webpage. This will have to be done on the webpage's HTML source outside of Unity.</remarks>
 public class WebMic : MonoBehaviour
 {
+    /// <summary>
+    /// The state of recording. For sanity/portability sake, anything using the WebMic should be
+    /// coded to pretend that all 3 states of plausible for whatever platform it's running on -
+    /// i.e., don't hardcode anything platform-specific that WebMic is in charge of wrapping
+    /// logic for.
+    /// </summary>
     public enum State
     { 
+        /// <summary>
+        /// The microphone is being prepared for use, but is not ready yet.
+        /// </summary>
         Booting,
+
+        /// <summary>
+        /// Not recording.
+        /// </summary>
         NotActive,
+
+        /// <summary>
+        /// Currently recording.
+        /// </summary>
         Recording
     }
 
-    [DllImport("__Internal")]
-    public static extern void Hello();
-
-    [DllImport("__Internal")]
-    public static extern void HelloString(string str);
-
+    /// <summary>
+    /// Called to start web recording functionality.
+    /// </summary>
     [DllImport("__Internal")]
     public static extern void Recording_Start();
 
+    /// <summary>
+    /// Called to stop web recording.
+    /// </summary>
     [DllImport("__Internal")]
     public static extern void Recording_Stop();
 
+    /// <summary>
+    /// Recording query function.
+    /// </summary>
+    /// <returns>If false, the recording state is State.NotActive. Else, true.</returns>
     [DllImport("__Internal")]
     public static extern bool Recording_IsRecording();
 
@@ -33,7 +90,16 @@ public class WebMic : MonoBehaviour
     /// </summary>
     public const int FreqRate = 44100;
 
-    AudioClip recordingClip = null;
+    /// <summary>
+    /// When a recording is finished, it's cached for whoever want to pluck it out.
+    /// Only the very last recording is held.
+    /// </summary>
+    AudioClip _recordingClip = null;
+    public AudioClip RecordingClip 
+    {
+        get=>this._recordingClip; 
+        private set{this._recordingClip = value; } 
+    }
 
     /// <summary>
     /// The name of the recording device recorded from. Cached and displayed for debugging.
@@ -45,17 +111,13 @@ public class WebMic : MonoBehaviour
     /// </summary>
     public const int MaxRecordTime = 5;
 
-    private void Start()
-    {
-        //Recording_Init();
-    }
+    // private void Start()
+    // {}
 
-    public AudioClip GetAudioClip()
-    {
-        return this.recordingClip;
-    }
-
+// The functionality for when we're testing outside of a web browser.
+// To developer for the web browser, temporarily switch to #if false
 #if !UNITY_WEBGL || UNITY_EDITOR
+//#if false
     public bool SetDefaultRecordingDevice()
     {
         if (Microphone.devices.Length > 0)
@@ -68,14 +130,14 @@ public class WebMic : MonoBehaviour
 
     public bool StartRecording()
     {
-        this.recordingClip = Microphone.Start(this.recordingDevice, false, MaxRecordTime, FreqRate);
-        return this.recordingClip != null;
+        this.RecordingClip = Microphone.Start(this.recordingDevice, false, MaxRecordTime, FreqRate);
+        return this.RecordingClip != null;
     }
 
     public AudioClip StopRecording()
     {
         Microphone.End(this.recordingDevice);
-        return this.recordingClip;
+        return this.RecordingClip;
     }
 
     public State RecordingState()
@@ -108,7 +170,7 @@ public class WebMic : MonoBehaviour
         this.recordingState = State.Booting;
         Recording_Start();
 
-        this.recordingClip = null;
+        this.RecordingClip = null;
         return true;
     }
 
@@ -116,7 +178,7 @@ public class WebMic : MonoBehaviour
     {
         NotifyRecordingChange((int)State.NotActive);
         Recording_Stop();
-        return this.recordingClip;
+        return this.RecordingClip;
     }
 
     public State RecordingState()
@@ -126,7 +188,6 @@ public class WebMic : MonoBehaviour
 
     public bool ClearRecording()
     {
-        Debug.Log("Clearing recording");
 
         if (this.binaryStreams.Count == 0)
             return false;
@@ -138,7 +199,6 @@ public class WebMic : MonoBehaviour
 
     public float [] GetData(bool clear = true)
     { 
-        Debug.Log("GetData");
         List<float[]> datas = new List<float[]>();
 
         int fCt = 0;
@@ -163,8 +223,6 @@ public class WebMic : MonoBehaviour
             write += byteCt;
         }
 
-        Debug.Log($"Called GetData() with {this.binaryStreams.Count} streams to merge");
-
         if(clear == true)
             ClearRecording();
 
@@ -179,7 +237,6 @@ public class WebMic : MonoBehaviour
     /// <remarks>Called with SendMessage outside web management stuff.<remarks>
     public void NotifyRecordingChange(int newRS)
     { 
-        Debug.Log("notified recording change " + ((State)newRS).ToString());
 
         if((int)this.recordingState == newRS)
             return;
@@ -188,7 +245,7 @@ public class WebMic : MonoBehaviour
         this.recordingState = (State)newRS;
 
         if(oldState == State.Recording)
-            this.recordingClip = this.FlushDataIntoClip();
+            this.RecordingClip = this.FlushDataIntoClip();
 
     }
 
@@ -203,7 +260,6 @@ public class WebMic : MonoBehaviour
 
     AudioClip FlushDataIntoClip()
     {
-        Debug.Log("called FlushData");
 
         float[] pcm = this.GetData();
         if (pcm != null && pcm.Length > 0)
