@@ -1,0 +1,1 @@
+Some extra assets required for the browser demo with a sample html. Note the sample also requires the project, bullt for WebGL (build not included with repo).

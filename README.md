@@ -3,6 +3,13 @@
 A simple project showing how to granulate audio, with a test scene that allows toying with
 it. Made with a raw C# implementation and supports building for the Unity WebGL player.
 
+# Web Testing
+
+To test on a WebGL application, there are several things that need to be noted:
+- There is a Deployment folder at the root of this repo with extra web assets.
+- The micrphone recording uses a Unity to browser communication that's fragile.
+- The sandbox security of your browser may require that the sample be run off the internet, requiring a webserver to host the demo.
+
 #License
 
 MIT License
