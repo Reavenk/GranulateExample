@@ -1,0 +1,3 @@
+[submodule "Assets/Refs/UILayout_Core"]
+	path = Assets/Refs/UILayout_Core
+	url = https://github.com/Reavenk/UILayout_Core.git
