@@ -29,46 +29,6 @@ using UnityEngine;
 public class Test : MonoBehaviour
 {
     /// <summary>
-    /// A representation of a moment in the audio that we've gathered the
-    /// samples for and extracted.
-    /// </summary>
-    public class Grain
-    {
-        /// <summary>
-        /// The cached original start of where it was taken from the auidio.
-        /// </summary>
-        public float origStart;
-
-        /// <summary>
-        /// The time, in seconds, on when it should start adding content to the stream.
-        /// </summary>
-        public float start;
-
-        /// <summary>
-        /// The amount of time it should add content to the stream for. This is tied to
-        /// the Grain.samples variable - because we don't have audio past this.
-        /// </summary>
-        public float width;
-
-        /// <summary>
-        /// The amount of time to ramp up when adding content to the stream. This should 
-        /// not be greater than Grain.width - Grain.outEdge.
-        /// </summary>
-        public float inEdge;
-
-        /// <summary>
-        /// The amount of time to ramp down when adding content to the stream. This should
-        /// not be greater than Grain.width - Grain.inEdge.
-        /// </summary>
-        public float outEdge;
-
-        /// <summary>
-        /// The PCM samples for the grain.
-        /// </summary>
-        public float [] samples;
-    }
-
-    /// <summary>
     /// The audio clip recorded.
     /// </summary>
     AudioClip audioClip = null;
@@ -83,11 +43,7 @@ public class Test : MonoBehaviour
     /// </summary>
     public AudioSource audioSource;
 
-    /// <summary>
-    /// The grains extracted from the recorded audio clips.
-    /// </summary>
-    List<Grain> grains = null;
-
+    
     const float MaxScale = 4.0f;        // The highest amount we'll allow for an individual scaling operation
     const float MinScale = 0.25f;        // The smallest amount we'll allow for an individual scaling operation.
 
@@ -102,6 +58,8 @@ public class Test : MonoBehaviour
     float scaleAmt = 1.5f;
     float grainWidth = 0.2f;
     float grainStride = 0.1f;
+
+    Grainer grainer = new Grainer();
 
     /// <summary>
     /// Cached recording state - which we can compare with WebMic's value to
@@ -145,154 +103,6 @@ public class Test : MonoBehaviour
 #endif
     }
 
-    
-
-
-    /// <summary>
-    /// Granulate the audio data in the recorded audio.
-    /// </summary>
-    /// <param name="grainLen">The length of a grain.</param>
-    /// <param name="skipLen">The distance (in seconds) between grains.</param>
-    /// <param name="inlen">The ramp-up time for each grain.</param>
-    /// <param name="outlen">The ramp-down time for each grain.</param>
-    /// <returns>The ordered list of extracted grains.</returns>
-    public static List<Grain> Granulate(AudioClip clip, float grainLen, float skipLen, float inlen, float outlen)
-    {
-        List<Grain> ret = new List<Grain>();
-
-        if(clip == null)
-            return ret;
-
-        // Sanity fix
-        grainLen = Mathf.Max(grainLen, inlen + outlen); 
-
-        int sampleCt = clip.samples;
-        float [] samps = new float[sampleCt];
-        clip.GetData(samps, 0);
-
-        float loc = 0.0f;
-
-        int grainSamples = (int)(clip.frequency * grainLen);
-        while (loc < clip.length)
-        {
-            Grain g = new Grain();
-            g.inEdge = inlen;
-            g.outEdge = outlen;
-            g.start = loc;
-            g.origStart = loc;
-            g.width = grainLen;
-
-            int grainStart = (int)(clip.frequency * loc);
-            int grainEnd = grainStart + grainSamples;
-            
-            // Detect the last sample we'll copy over. It's either when we can't
-            // record any more, or when we go past the last sample we're granulating.
-            int sampleCpy = Mathf.Min(grainEnd, sampleCt) - grainStart;
-
-            g.samples = new float[grainSamples];
-
-            int i = 0;
-            for(; i <  sampleCpy; ++i)
-                g.samples[i] = samps[i + grainStart];
-
-            // Contingency for the last grain - it's probably going to go past the
-            // end of the samples. We could have modified the length to end exactly,
-            // but we're just going to fill it with zeros.
-            for(; i < grainSamples; ++i)
-                g.samples[i] = 0;
-
-            ret.Add(g);
-            loc += skipLen;
-        }
-
-        return ret;
-    }
-
-    /// <summary>
-    /// Given a list of grains, scale the start time of the entire list
-    /// by a constant value.
-    /// </summary>
-    /// <param name="grains">The grains to start the start times.</param>
-    /// <param name="scale">The amount to scale the start times.</param>
-    /// <param name="compound">If true, scale by current grain time, else scale by the original time.</param>
-    public static void ScaleGrainTime(List<Grain> grains, float scale, bool compound)
-    {
-        for(int i = 0; i < grains.Count; ++i)
-        {
-            if(compound == true)
-                grains[i].start *= scale;
-            else
-                grains[i].start = grains[i].origStart * scale;
-        }
-    }
-
-    /// <summary>
-    /// Given a list of grains, reconstruct them into the PCM for an audio stream.
-    /// </summary>
-    /// <remarks>The function assumes the list is ordered - or for the very least
-    /// that the last grain has the farthest time.</remarks>
-    /// <param name="grains">The grains to reconstruct.</param>
-    /// <returns>The reconstructed audio from the grains.</returns>
-    public static float[] ReconstructGrains(List<Grain> grains, float gain)
-    {
-        Grain lastGrain = grains[grains.Count - 1];
-        int retSampleCt = (int)(lastGrain.start * WebMic.FreqRate) + lastGrain.samples.Length;
-
-        // Doing a weighted average over time, so for each moment in time.
-        float [] ret = new float[retSampleCt];  // accumulated Sample_Value * Weight
-        float [] wt = new float[retSampleCt];   // accumulated Weight
-        for (int i = 0; i < retSampleCt; ++i)
-        {
-            ret[i] = 0;
-            wt[i] = 0;
-        }
-
-        foreach (Grain g in grains)
-        {
-            int start = (int)(g.start * WebMic.FreqRate);      // Sample index to start accumulating data into.
-            int end = g.samples.Length;                                 // The number of samples to write.
-            int endup = (int)(g.inEdge * WebMic.FreqRate);     // The number of samples for the ramp-up
-            int endhigh = (int)(g.outEdge * WebMic.FreqRate);  // The number of samples before ramping down.
-
-            int i = 0;  // The current grain sample we're writing.
-
-            // Write samples ramping up - just a linear increase in weight.
-            for (i = 0; i < endhigh; ++i)
-            {
-                float lam = ((float)i / (float)endhigh);
-                ret[start + i] += lam * g.samples[i];
-                wt[start + i] += lam;
-            }
-
-            // Write samples non-ramping - just a weight of 1.0
-            for (i = endup; i < endhigh; ++i)
-            {
-                ret[start + i] += g.samples[i];
-                wt[start+ i] += 1.0f;
-            }
-
-            // Write samples ramping down - just a linear decrease in weight.
-            float sub = 1.0f / ((float)end - (float)endhigh);
-            float downWt = 1.0f;
-            for (i = endhigh; i < end; ++i)
-            {
-                ret[start + i] += g.samples[i] * downWt;
-                wt[start+i] += downWt;
-                downWt -= sub;
-            }
-        }
-
-        // Divide each sample by the weight to turn the samples into a weighted average.
-        for (int i = 0; i < ret.Length; ++i)
-        {
-            if(wt[i] == 0.0f)
-                ret[i] = 0.0f;
-            else
-                ret[i] = ret[i] / wt[i] * gain;
-        }
-
-        return ret;
-    }
     private void OnGUI()
     {
         this.uiScroll = GUILayout.BeginScrollView(this.uiScroll, GUILayout.Width(Screen.width), GUILayout.Height(Screen.height));
@@ -323,7 +133,7 @@ public class Test : MonoBehaviour
                 this.mic.StartRecording();
                 
                 this.timeStartedRecording = Time.time;
-                this.grains = null;
+                this.grainer.Clear();
             }
             if(GUILayout.Button("Load Sample") == true)
             {
@@ -334,7 +144,6 @@ public class Test : MonoBehaviour
         
                 this.audioClip = AudioClip.Create("", floatArray.Length, 1, WebMic.FreqRate, false);
                 this.audioClip.SetData(floatArray, 0);
-                this.grains = null;
             }
         }
         else
@@ -397,24 +206,23 @@ public class Test : MonoBehaviour
         {
             wipeGrains = false;
     
-            this.grains =
-                Granulate(
-                    this.audioClip,
-                    this.grainWidth,
-                    this.grainStride,
-                    this.grainWidth * 0.45f,
-                    this.grainWidth * 0.45f);
+            this.grainer.Granulate(
+                this.audioClip,
+                this.grainWidth,
+                this.grainStride,
+                this.grainWidth * 0.45f,
+                this.grainWidth * 0.45f);
         }
     
         if (wipeGrains == true)
-            this.grains = null;
+            this.grainer.Clear();
     
-        if (this.grains == null)
+        if (this.grainer.HasGrains() == false)
             return;
     
         GUIHeader("STEP 3) Reconstruct Grains");
     
-        GUILayout.Label($"Has {this.grains.Count} grains.");
+        GUILayout.Label($"Has {this.grainer.Count} grains.");
     
     
         GUILayout.Label("Time Reconstruction Scale");
@@ -447,9 +255,9 @@ public class Test : MonoBehaviour
     
         if (GUILayout.Button("Reconstruct", GUILayout.Height(50.0f)) == true)
         {
-            ScaleGrainTime(this.grains, this.scaleAmt, false);
+            this.grainer.ScaleGrainTime(this.scaleAmt, false);
     
-            float[] samp = ReconstructGrains(this.grains, this.gain);
+            float[] samp = this.grainer.ReconstructGrains( this.gain);
             AudioClip newclip = AudioClip.Create("", samp.Length, 1, WebMic.FreqRate, false);
             newclip.SetData(samp, 0);
     
