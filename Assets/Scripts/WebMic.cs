@@ -25,7 +25,6 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-
 /// <summary>
 /// A class to wrap the functionality of the microphone to hack in microphone 
 /// abilities for WebGL.
@@ -78,12 +77,8 @@ public class WebMic : MonoBehaviour
     [DllImport("__Internal")]
     public static extern void Recording_Stop();
 
-    /// <summary>
-    /// Recording query function.
-    /// </summary>
-    /// <returns>If false, the recording state is State.NotActive. Else, true.</returns>
     [DllImport("__Internal")]
-    public static extern bool Recording_IsRecording();
+    public static extern bool Recording_UpdatePointer(float [] idx);
 
     /// <summary>
     /// The record and playback rate. Kept as a constant to keep things simple.
@@ -114,8 +109,8 @@ public class WebMic : MonoBehaviour
     // private void Start()
     // {}
 
-// The functionality for when we're testing outside of a web browser.
-// To developer for the web browser, temporarily switch to #if false
+    // The functionality for when we're testing outside of a web browser.
+    // To developer for the web browser, temporarily switch to #if false
 #if !UNITY_WEBGL || UNITY_EDITOR
 //#if false
     public bool SetDefaultRecordingDevice()
@@ -154,8 +149,38 @@ public class WebMic : MonoBehaviour
     }
 
 #else
-    private List<string> binaryStreams = new List<string>();
+
+    const int BufferSize = 2048;
+    public struct FloatArray
+    { 
+        public float [] buffer;
+        public int written;
+    }
+
+    private List<FloatArray> binaryStreams = new List<FloatArray>();
     State recordingState = State.NotActive;
+
+    FloatArray currentBuffer;
+
+    public void Awake()
+    {
+        this.currentBuffer = new FloatArray();
+        this.currentBuffer.buffer = new float[BufferSize];
+        Recording_UpdatePointer(this.currentBuffer.buffer);
+    }
+
+    public void LogWrittenBuffer(int written)
+    { 
+        if(this.recordingState != State.Recording)
+            return;
+
+        this.currentBuffer.written = written;
+        this.binaryStreams.Add(this.currentBuffer);
+
+        this.currentBuffer = new FloatArray();
+        this.currentBuffer.buffer = new float[BufferSize];
+        Recording_UpdatePointer(this.currentBuffer.buffer);
+    }
 
     public bool SetDefaultRecordingDevice()
     {
@@ -168,6 +193,7 @@ public class WebMic : MonoBehaviour
             return false;
 
         this.recordingState = State.Booting;
+
         Recording_Start();
 
         this.RecordingClip = null;
@@ -176,7 +202,6 @@ public class WebMic : MonoBehaviour
 
     public AudioClip StopRecording()
     {
-        NotifyRecordingChange((int)State.NotActive);
         Recording_Stop();
         return this.RecordingClip;
     }
@@ -188,7 +213,6 @@ public class WebMic : MonoBehaviour
 
     public bool ClearRecording()
     {
-
         if (this.binaryStreams.Count == 0)
             return false;
 
@@ -199,44 +223,34 @@ public class WebMic : MonoBehaviour
 
     public float [] GetData(bool clear = true)
     { 
-        List<float[]> datas = new List<float[]>();
-
         int fCt = 0;
-        foreach(string str in this.binaryStreams)
-        {
-            byte[] rb = System.Convert.FromBase64String(str);
-            float[] rf = new float[rb.Length / 4];
-
-            System.Buffer.BlockCopy(rb, 0, rf, 0, rb.Length);
-            datas.Add(rf);
-            fCt += rf.Length;
-        }
+        foreach(FloatArray fa in this.binaryStreams)
+            fCt += fa.written;
 
         float [] ret = new float[fCt];
 
 
         int write = 0;
-        foreach(float [] rf in datas )
+        foreach(FloatArray fa in this.binaryStreams)
         { 
-            int byteCt = rf.Length * 4;
-            System.Buffer.BlockCopy(rf, 0, ret, write, byteCt);
-            write += byteCt;
+            System.Buffer.BlockCopy(fa.buffer, 0, ret, write * 4, fa.written * 4);
+            write += fa.written;
         }
 
-        if(clear == true)
+        if (clear == true)
             ClearRecording();
 
         return ret;
     }
 
     /// <summary>
-
+    // Called from JavaScript to notify the app that the microphone recording
+    // state has changed.
     /// </summary>
-    /// <param name="newRS"></param>
+    /// <param name="newRS">The new recording state. The int value of a State enum.</param>
     /// <remarks>Called with SendMessage outside web management stuff.<remarks>
     public void NotifyRecordingChange(int newRS)
     { 
-
         if((int)this.recordingState == newRS)
             return;
 
@@ -245,21 +259,10 @@ public class WebMic : MonoBehaviour
 
         if(oldState == State.Recording)
             this.RecordingClip = this.FlushDataIntoClip();
-
-    }
-
-    public void ReceiveB64FloatPCMChunk(string val)
-    {
-        // Reject excess.
-        if(this.recordingState == State.NotActive)
-            return;
-
-        this.binaryStreams.Add(val);
     }
 
     AudioClip FlushDataIntoClip()
     {
-
         float[] pcm = this.GetData();
         if (pcm != null && pcm.Length > 0)
         {
