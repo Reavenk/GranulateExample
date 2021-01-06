@@ -2,6 +2,11 @@ var recorderNode = null;
 var audioContext = null;
 var audioInput = null;
 var microphone_stream = null;
+var recorder = null;
+
+const MICRENUM_BOOTING = 0;
+const MICRENUM_NOTACTIVE = 1;
+const MICRENUM_RECORDING = 2;
 
 // Convert an array buffer to its binary form
 // of a base64 string.
@@ -23,7 +28,10 @@ function arrayBufferToBase64(buffer, callback)
 // Starts recording from a microphone.
 function StartMic()
 {
-
+	// https://www.meziantou.net/record-audio-with-javascript.htm
+	
+	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_BOOTING);
+	
 	if (!navigator.getUserMedia)
 	{
 		navigator.getUserMedia =
@@ -35,7 +43,6 @@ function StartMic()
 
 	if (navigator.getUserMedia)
 	{
-
 		navigator.getUserMedia(
 			{ audio: true },
 			function (stream)
@@ -44,62 +51,65 @@ function StartMic()
 			},
 			function (e)
 			{
+				unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_NOTACTIVE);
 				alert('Error capturing audio.');
 			}
 		);
-
 	}
 	else
 	{
 		alert('getUserMedia not supported in this browser.');
+		unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_NOTACTIVE);
 	}
 }
 
 // Callback worker for StartMic().
 function start_microphone(stream)
 {
-	unityInstance.SendMessage("Managers", "NotifyRecordingChange", 0);
-
 	audioContext = new AudioContext();
 	microphone_stream = audioContext.createMediaStreamSource(stream);
-	audioContext.audioWorklet.addModule('./recorderWorkletProcessor.js')
-		.then(
-			() => {
-				recorderNode = new window.AudioWorkletNode(audioContext, 'recorder-worklet');
+	
+	var bufferSize = 2048;
+	var numberOfInputChannels = 2;
+	var numberOfOutputChannels = 2;
+	if (audioContext.createScriptProcessor) 
+	{
+		recorder = audioContext.createScriptProcessor(bufferSize, numberOfInputChannels, numberOfOutputChannels);
+	} 
+	else 
+	{
+		recorder = audioContext.createJavaScriptNode(bufferSize, numberOfInputChannels, numberOfOutputChannels);
+	}
+	
+	recorder.onaudioprocess = function (e) 
+	{
+		console.log("yo!");
+		arrayBufferToBase64(
+			e.inputBuffer.getChannelData(0),
+			(x) => {
+				unityInstance.SendMessage("Managers", "ReceiveB64FloatPCMChunk", x);
+			});
+	}
 
-				microphone_stream.connect(recorderNode);
-				recorderNode.connect(audioContext.destination);
-
-				unityInstance.SendMessage("Managers", "NotifyRecordingChange", 2);
-
-				recorderNode.port.onmessage =
-					(e) => {
-						if (e.data.eventType === 'data') {
-
-							// https://medium.com/@koteswar.meesala/convert-array-buffer-to-base64-string-to-display-images-in-angular-7-4c443db242cd
-							// https://stackoverflow.com/questions/63713889/convert-float32array-to-base64-in-javascript
-							const audioData = e.data.audioBuffer;
-							arrayBufferToBase64(
-								audioData,
-								(x) => {
-									unityInstance.SendMessage("Managers", "ReceiveB64FloatPCMChunk", x);
-								});
-						}
-
-						if (e.data.eventType === 'stop') {
-							unityInstance.SendMessage("Managers", "NotifyRecordingChange", 1);
-						}
-					};
-
-				recorderNode.parameters.get('isRecording').setValueAtTime(1, 0.0);
-			})
+	// we connect the recorder with the input stream
+	microphone_stream.connect(recorder);
+	recorder.connect(audioContext.destination)
+	
+	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_RECORDING);
 }
 
 // Callback
 function StopMic()
 {
-	audioContext.close();
-	recorderNode = null;
+	if(audioContext == null)
+		return;
+		
+	recorder.disconnect(audioContext.destination);
+	microphone_stream.disconnect(recorder);
+	
+	audioContext = null;
+	recorder = null;
+	microphone_stream = null;
 
-	unityInstance.SendMessage("Managers", "NotifyRecordingChange", 1);
+	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_NOTACTIVE);
 }

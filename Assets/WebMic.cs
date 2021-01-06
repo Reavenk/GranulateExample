@@ -226,7 +226,6 @@ public class WebMic : MonoBehaviour
         if(clear == true)
             ClearRecording();
 
-
         return ret;
     }
 
