@@ -4,9 +4,13 @@ var audioInput = null;
 var microphone_stream = null;
 var recorder = null;
 
-const MICRENUM_BOOTING = 0;
-const MICRENUM_NOTACTIVE = 1;
-const MICRENUM_RECORDING = 2;
+// These need to match the enums in the WebMic.cs file
+const MicState =
+{
+	Booting: 0,
+	NotActive: 1,
+	Recording : 2
+}
 
 // Convert an array buffer to its binary form
 // of a base64 string.
@@ -29,8 +33,8 @@ function arrayBufferToBase64(buffer, callback)
 function StartMic()
 {
 	// https://www.meziantou.net/record-audio-with-javascript.htm
-	
-	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_BOOTING);
+
+	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MicState.Booting);
 	
 	if (!navigator.getUserMedia)
 	{
@@ -51,7 +55,7 @@ function StartMic()
 			},
 			function (e)
 			{
-				unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_NOTACTIVE);
+				unityInstance.SendMessage("Managers", "NotifyRecordingChange", MicState.NotActive);
 				alert('Error capturing audio.');
 			}
 		);
@@ -59,7 +63,7 @@ function StartMic()
 	else
 	{
 		alert('getUserMedia not supported in this browser.');
-		unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_NOTACTIVE);
+		unityInstance.SendMessage("Managers", "NotifyRecordingChange", MicState.NotActive);
 	}
 }
 
@@ -94,8 +98,8 @@ function start_microphone(stream)
 	// we connect the recorder with the input stream
 	microphone_stream.connect(recorder);
 	recorder.connect(audioContext.destination)
-	
-	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_RECORDING);
+
+	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MicState.Recording);
 }
 
 // Callback
@@ -111,5 +115,5 @@ function StopMic()
 	recorder = null;
 	microphone_stream = null;
 
-	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MICRENUM_NOTACTIVE);
+	unityInstance.SendMessage("Managers", "NotifyRecordingChange", MicState.NotActive);
 }
