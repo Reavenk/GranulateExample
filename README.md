@@ -10,7 +10,7 @@ To test on a WebGL application, there are several things that need to be noted:
 - The micrphone recording uses a Unity to browser communication that's fragile.
 - The sandbox security of your browser may require that the sample be run off the internet, requiring a webserver to host the demo.
 
-#License
+# License
 
 MIT License
 
